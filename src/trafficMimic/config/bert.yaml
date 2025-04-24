@@ -1,0 +1,51 @@
+trainer:
+  train_data_pth: [
+    # '/mnt/data/lzx/traffic_data/pcapdata/eMule_flow/p2pbox1.2011032700.pcap.clean.pcap.pkl',
+    # '/mnt/data/lzx/traffic_data/pcapdata/eMule_flow/p2pbox1.2011032715.pcap.clean.pcap.pkl',
+    # '/mnt/data/lzx/traffic_data/mawi/flow/202306111400.pcap.pkl'
+    # '/mnt/data/lzx/traffic_data/mawi/flow/202306111400_training_demo.pkl'
+    '/mnt/data/lzx/traffic_data/KitSuneData/SSDP_Flood/SourceIP_flow/SSDP_Flood_benign_30_train_bert.pkl'
+  ]
+  test_data_pth: [
+    # '/mnt/data/lzx/traffic_data/pcapdata/eMule_flow/p2pbox1.2011032700.pcap.clean.pcap.pkl',
+    # '/mnt/data/lzx/traffic_data/pcapdata/eMule_flow/p2pbox1.2011032715.pcap.clean.pcap.pkl',
+    # '/mnt/data/lzx/traffic_data/mawi/flow/test.pkl'
+    '/mnt/data/lzx/traffic_data/KitSuneData/SSDP_Flood/SourceIP_flow/SSDP_Flood_benign_30_small.pkl'
+  ]
+
+  # load_save_pth: /home/lzx/NetMasquerade/Pretrained_models/56/BERTLM_model_mawi0611_sizebest.pth
+  load_save_pth: /home/lzx/NetMasquerade/Pretrained_models/56_bi_attn_linear/BERTLM_model_mawi0611_sizebest.pth
+  timevocab_pth: /home/lzx/NetMasquerade/Pretrain/dataset/timevocab_56.pkl
+  sizevocab_pth: /home/lzx/NetMasquerade/Pretrain/dataset/sizevocab_1606.pkl
+  # model_save_pth: './Pretrained_models/56_bi_double_linear/BERTLM_model_mawi0611'
+  model_save_pth: './Pretrained_models/56_bi_double_linear/BERTLM_model_mawi0611_for_ssdp'
+  device: 3
+  batch_size: 64
+  epochs: 300
+  log_frequency: 10
+  optimizer:
+    type: 'AdamW'
+    lr: 0.001
+    beta: (0.9, 0.999)
+    weight_decay: 0.01
+    warmup_steps: 10000
+
+
+model:
+  seq_len: 512
+  f_features: 2
+  hidden: 128 # embedding size
+  d_ff: 512 # feed forward network
+  n_layers: 6
+  attn_heads: 8
+  dropout: 0.1
+
+
+# save model(3处)
+# vocab_size(2处)
+# 数据集
+# vocab_pth
+# model_save_pth
+# 新建save_pth
+# 改log名字
+# device

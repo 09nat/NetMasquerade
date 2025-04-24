@@ -1,0 +1,44 @@
+trainer:
+  train_data_pth: /mnt/data/lzx/traffic_data/HVData/csrf/flow/csrf_m_RL.pkl
+  # train_data_pth: /mnt/data/lzx/traffic_data/Botnets/Zeus_flow/SourceIP_flow/Zeus_pkl_malicious.pcap.pkl
+  test_data_pth: /mnt/data/lzx/traffic_data/HVData/csrf/flow/csrf_m_RL.pkl
+  device: 1
+  episodes: 3000
+  test_episodes: 99
+  batch_size: 64
+  buffer_size: 10000   
+  minimal_size: 200
+  model_save_pth: /home/lzx/NetMasquerade/Finetune/checkpoints/MLP_csrf/
+  target_model_pth: /home/lzx/NetMasquerade/Finetune/environments/MLP/model/csrf.pt
+  fig_save_pth: # /home/lzx/NetMasquerade/rl_fig/KitSune/KitSune_ssdp_{}_qvalue.pdf
+  stop_threshold: 0.95
+  max_stop_step: 10
+  env_name: MLP
+  figure_path:
+  flow_save_pth: # /home/lzx/NetMasquerade/adversarial_traffic/KitSune_ssdp_feature.pkl
+  bert_pth: /home/lzx/NetMasquerade/Pretrained_models/56_bi_attn_linear/BERTLM_model_mawi0611_sizebest.pth
+  # bert_pth: /home/lzx/NetMasquerade/Pretrained_models/56_bi_double_linear/BERTLM_model_mawi0611_for_ssdp_ipdbest.pth
+
+# KitSune改evaluation的nstat！
+
+env:
+  bad_ip:
+
+model:
+  timevocab_size: 56
+  sizevocab_size: 1606
+  actor_lr: 0.00001  # 0.00001
+  critic_lr: 0.00001 # 0.00001
+  alpha_lr: 0.00001
+  num_episodes: 200
+  embedding_dim: 128
+  state_dim: 512
+  hidden_dim: 128
+  gamma: 0.9 # 
+  tau: 0.005  # soft update
+  buffer_size: 100000
+  minimal_size: 1000
+  batch_size: 64
+  target_entropy: -5
+  gamma_1: 0
+  gamma_2: 0
