@@ -74,9 +74,6 @@ class TimeVocab(Vocab):
         bin_width = (max_val - min_val) / (self.max_size - self.special_size)
         bins = np.arange(min_val, max_val, bin_width)
 
-        # bins = np.insert(bins, 0, np.log10(1e-9))
-        # indices = np.digitize(log_data, bins) # calculate bin index of data 
-        # print(np.power(10, bins))
         return bins
     
 
@@ -98,15 +95,10 @@ class TimeVocab(Vocab):
             return self.unk_index
         if word + 1e-9 < self.bins[0]:
             return self.unk_index
-        return np.digitize(np.log10(word + 1e-9), self.bins) + self.special_size - 1   # digitize start from 0(left shift)
-    
-    # 一个可能有的问题：测试集里np.digitize可能出现0，就是小于min_val的值，这里暂时用unknown index处理了
-    # 这样的话 +self.special_size-1就可以从0开始了，因为训练集里最小输出1，最大输出(self.max_size - self.special_size,self.bins长度) + 1(最右) (+ self.special_size - 1)
-
+        return np.digitize(np.log10(word + 1e-9), self.bins) + self.special_size - 1
 
     def to_seq(self, sentence, seq_len, with_eos=False, with_sos=False, with_ori_len=False) -> list:
         seq = [self.stoi(word) for word in sentence]
-        # print('this seq:\t', seq)
 
         if with_eos:
             seq += [self.eos_index]
@@ -125,7 +117,6 @@ class TimeVocab(Vocab):
         return (seq, origin_seq_len) if with_ori_len else seq
 
     def from_seq(self, seq, with_pad=False):
-        # print(seq)
         sentence = [self.itos(index) for index in seq]
         cnt = len(sentence)
         if not with_pad:
@@ -135,11 +126,10 @@ class TimeVocab(Vocab):
 
 
 class SizeVocab(Vocab):
-    def __init__(self, data, ratio=1):    # MTU
+    def __init__(self, data, ratio=1):
         self.ratio = ratio
         max_size = 1600 // ratio
         super(SizeVocab, self).__init__(data, max_size)
-
 
     def hash(self, word):
         return int(word) // self.ratio
@@ -151,14 +141,14 @@ class SizeVocab(Vocab):
         if index < self.special_size:
             return self.special_list[index]
         if index > self.max_size:
-            return self.special_list[self.unk_index]  # unk
+            return self.special_list[self.unk_index]
         return self.rehash(index - self.special_size)
 
     def stoi(self, word):
         if word in self.reverse_list:
             return self.reverse_list[word]
         if self.hash(word) + self.special_size >= self.max_size:
-            return self.unk_index  # unk index
+            return self.unk_index
         return self.hash(word) + self.special_size
 
     def to_seq(self, sentence, seq_len, with_eos=False, with_sos=False, with_ori_len=False) -> list:
@@ -190,10 +180,4 @@ class SizeVocab(Vocab):
 
 
 if __name__ == '__main__':
-    pth = '/home/lzx/NetMasquerade/Pretrain/config/bert.yaml'
-    args = recursive_namespace(read_yaml(pth))
-    data = list(feature_extract(read_flow_pkl(args.trainer.train_data_pth)))
-    ipd, size = list(data[0]), list(data[1])
-    timevocab = TimeVocab(ipd, max_size=2000, )
-    for lst in ipd:
-        print(timevocab.to_seq(lst, None))
+    pass

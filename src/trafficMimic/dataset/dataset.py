@@ -6,7 +6,6 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from utils import feature_extract, read_flow_pkl
 from dataset.vocab import *
-# max_size: 7340, vocab: 7340
 
 class FlowDataset(Dataset):
     def __init__(self, args, timevocab, sizevocab, train=False) -> None:
@@ -49,7 +48,6 @@ class FlowDataset(Dataset):
         padding = [self.timevocab.pad_index for _ in range(self.seq_len - len(flow_ipd))]
         flow_ipd.extend(padding), flow_size.extend(padding), flow_ipd_label.extend(padding), flow_size_label.extend(padding)
 
-        # print(len(flow_ipd), len(flow_ipd_label), len(flow_size), len(flow_size_label))
         output = {"flow_ipd": flow_ipd,
                   "flow_size": flow_size,
                   "flow_ipd_label": flow_ipd_label,
@@ -79,7 +77,6 @@ class FlowDataset(Dataset):
                     tokens[i] = vocab.stoi(token)
 
                 output_label.append(token)
-                # print('token:\t', token)
 
             else:
                 tokens[i] = token
@@ -89,16 +86,4 @@ class FlowDataset(Dataset):
 
 
 if __name__ == '__main__':
-    args = recursive_namespace(read_yaml('/home/lzx/NetMasquerade/Pretrain/config/bert.yaml'))
-    data = list(feature_extract(read_flow_pkl(args.trainer.train_data_pth)))
-    ipd, size = list(data[0]), list(data[1])
-    timevocab = TimeVocab(ipd)
-    sizevocab = SizeVocab(size)
-
-    train_dataset = FlowDataset(args, timevocab, sizevocab, train=True)
-    train_dataloader = DataLoader(train_dataset, batch_size=args.trainer.batch_size,shuffle=True, drop_last=True)
-
-    cnt = 0
-    for batch in train_dataloader:
-        print('batch[flow_ipd_label]: ', batch['flow_ipd_label'])
-
+    pass
