@@ -13,8 +13,6 @@ from dataset.dataset import FlowDataset
 from dataset.vocab import TimeVocab, SizeVocab
 import argparse
 
-# torch.set_printoptions(profile="full")
-
 class BertTrainer:
     def __init__(self, args, bert: BERT, timevocab: TimeVocab, sizevocab: SizeVocab):
         self.args = args
@@ -37,13 +35,11 @@ class BertTrainer:
         print('total len of train dataset: ', len(train_dataset))
         test_dataset = FlowDataset(args, timevocab, sizevocab, train=False)
         self.test_dataloader = DataLoader(test_dataset, batch_size=args.trainer.batch_size, shuffle=False, drop_last=True)
-        # Setting the Adam optimizer with hyper-param
+
         self.optim = AdamW(self.model.parameters(), lr=self.args.trainer.optimizer.lr,
                                       betas=eval(self.args.trainer.optimizer.beta),
                                       weight_decay=self.args.trainer.optimizer.weight_decay)
-        # self.optim_schedule = ScheduledOptim(self.optim, self.bert.hidden, n_warmup_steps=self.args.trainer.optimizer.warmup_steps)
 
-        # Using Negative Log Likelihood Loss function for predicting the masked_token
         self.criterion = nn.NLLLoss(ignore_index=0)
         print("Total Parameters:", sum([p.nelement() for p in self.model.parameters()]))
         self.best_ipd_acc = 0.0
@@ -71,32 +67,20 @@ class BertTrainer:
         total_size_element = 0.0
         for iter, batch in data_iter:
             batch = {key: value.to(self.device) for key, value in batch.items()}
-            # real_length = batch['real_length'][0].item()
-            # for key, value in batch.items():
-            #     print(key, ': ', value) 
+
             ipd_pred, size_pred = self.model(batch['flow_ipd'], batch['flow_size'])
 
             ipd_loss = self.criterion(ipd_pred.transpose(1, 2), batch['flow_ipd_label'])
             size_loss = self.criterion(size_pred.transpose(1, 2), batch['flow_size_label'])
             loss = ipd_loss + size_loss
 
-            # if epoch > 5:
-            #     if iter < 10:
-            #         print(ipd_pred[:, 1: real_length - 1])
-
-            # print('loss success: ', loss)
-            # print('batch[flow_ipd_label].shape: ', batch['flow_ipd_label'].shape)
-            # print('ipd_pred:', ipd_pred.argmax(dim=-1)[0])
-            # print('batch: ', batch['flow_ipd_label'][0])
             ipd_label_mask = batch['flow_ipd_label'].ne(0)
             size_label_mask = batch['flow_size_label'].ne(0)
 
             batch_ipd_correct = (ipd_pred.argmax(dim=-1).eq(batch['flow_ipd_label']) & ipd_label_mask).sum().item()
-            # batch_total_ipd = (batch['flow_ipd_label'] != 0).sum().item()
             batch_total_ipd = ipd_label_mask.sum().item()
 
             batch_size_correct = (size_pred.argmax(dim=-1).eq(batch['flow_size_label']) & size_label_mask).sum().item()
-            # batch_total_size = (batch['flow_size_label'] != 0).sum().item()
             batch_total_size = size_label_mask.sum().item()
 
             total_ipd_correct += batch_ipd_correct
@@ -110,10 +94,6 @@ class BertTrainer:
                 self.optim.zero_grad()
                 loss.backward()
                 self.optim.step()
-                
-                # self.optim_schedule.zero_grad()
-                # loss.backward()
-                # self.optim_schedule.step_and_update_lr()
 
 
             post_fix = {
@@ -122,14 +102,11 @@ class BertTrainer:
                 'avg_loss': total_loss / (iter + 1),
                 'ipd_loss': ipd_loss.item(),
                 'size_loss': size_loss.item(),
-                # 'avg_acc': total_correct / total_element * 100,
                 'batch_ipd_acc': batch_ipd_correct / batch_total_ipd,
                 'batch_size_acc': batch_size_correct / batch_total_size, 
-                # 'loss': loss.item()
             }
 
             if iter % self.args.trainer.log_frequency == 0:
-                # data_iter.write(str(post_fix))
                 data_iter.set_postfix(post_fix)
         
         total_ipd_acc = total_ipd_correct / total_ipd_element
@@ -146,11 +123,6 @@ class BertTrainer:
             if total_size_acc > self.best_size_acc:
                 self.best_size_acc = total_size_acc
                 self.save(epoch, best='sizebest')
-        
-        # print("epoch %d, avg_loss= %f, total_acc= %f" % 
-        #         (epoch, total_loss / len(data_iter), total_correct * 100.0 / total_element))
-        # print("epoch %d, loss= %f" % 
-        #         (epoch, loss, ))
 
 
     def save(self, epoch, best=None):
@@ -174,14 +146,14 @@ class BertTrainer:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--pth', type=str, default='/home/lzx/NetMasquerade/Pretrain/config/bert.yaml',
+    parser.add_argument('--pth', type=str, default='./trafficMimic/config/bert.yaml',
                         help='path to load config', )
     args = parser.parse_args()
     args = recursive_namespace(read_yaml(args.pth))
    
-    # train_data: [time, size], time:list of list
+    # train_data: [time, size], time: list of list
     if not os.path.isfile(args.trainer.timevocab_pth) or not os.path.isfile(args.trainer.sizevocab_pth):
-        train_data = list(feature_extract(read_flow_pkl(args.trainer.train_data_pth))) # tuple to list
+        train_data = list(feature_extract(read_flow_pkl(args.trainer.train_data_pth)))
         print('train data loaded!')
     
     if not os.path.isfile(args.trainer.timevocab_pth):
@@ -216,5 +188,3 @@ if __name__ == '__main__':
 
         if trainer.test_dataloader is not None:
             trainer.test(epoch_iter)
-    # model = Transformer().to(device)
-    # train(model, args)
