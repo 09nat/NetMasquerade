@@ -1,25 +1,21 @@
 trainer:
-  train_data_pth: /mnt/data/lzx/traffic_data/HVData/csrf/flow/csrf_m_RL.pkl
-  # train_data_pth: /mnt/data/lzx/traffic_data/Botnets/Zeus_flow/SourceIP_flow/Zeus_pkl_malicious.pcap.pkl
-  test_data_pth: /mnt/data/lzx/traffic_data/HVData/csrf/flow/csrf_m_RL.pkl
+  train_data_pth: ../traffic_data/HVData/csrf/flow/csrf_m_RL.pkl
+  test_data_pth: ../traffic_data/HVData/csrf/flow/csrf_m_RL.pkl
   device: 1
   episodes: 3000
   test_episodes: 99
   batch_size: 64
   buffer_size: 10000   
   minimal_size: 200
-  model_save_pth: /home/lzx/NetMasquerade/Finetune/checkpoints/MLP_csrf/
-  target_model_pth: /home/lzx/NetMasquerade/Finetune/environments/MLP/model/csrf.pt
-  fig_save_pth: # /home/lzx/NetMasquerade/rl_fig/KitSune/KitSune_ssdp_{}_qvalue.pdf
+  model_save_pth: ./advGenerate/checkpoints/MLP_csrf/
+  target_model_pth: ./advGenerate/environments/MLP/model/csrf.pt
+  fig_save_pth:
   stop_threshold: 0.95
   max_stop_step: 10
   env_name: MLP
   figure_path:
-  flow_save_pth: # /home/lzx/NetMasquerade/adversarial_traffic/KitSune_ssdp_feature.pkl
-  bert_pth: /home/lzx/NetMasquerade/Pretrained_models/56_bi_attn_linear/BERTLM_model_mawi0611_sizebest.pth
-  # bert_pth: /home/lzx/NetMasquerade/Pretrained_models/56_bi_double_linear/BERTLM_model_mawi0611_for_ssdp_ipdbest.pth
-
-# KitSune改evaluation的nstat！
+  flow_save_pth:
+  bert_pth: /home/lzx/NetMasquerade/Pretrained_models/56_bi_attn_linear/BERTLM_model_mawi202306_sizebest.pth
 
 env:
   bad_ip:

@@ -1,13 +1,14 @@
+# This file is a simulation version of NetMasquerade.
+
 import os
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import random
 import torch
-from Pretrain.utils import *
+from trafficMimic.utils import *
 from torch.utils.data import Dataset, DataLoader
-from Pretrain.dataset.vocab import *
+from trafficMimic.dataset.vocab import *
 from copy import deepcopy
-# max_size: 7340, vocab: 7340
 
 class RLFlowDataset(Dataset):
     def __init__(self, args, timevocab, sizevocab, mode) -> None:
@@ -40,7 +41,6 @@ class RLFlowDataset(Dataset):
         padding = [self.timevocab.pad_index for _ in range(self.seq_len - len(flow_ipd))]
         flow_ipd.extend(padding), flow_size.extend(padding)
 
-        # print(len(flow_ipd), len(flow_ipd_label), len(flow_size), len(flow_size_label))
         output = {"flow_ipd": flow_ipd,
                   "flow_size": flow_size,
                   "real_length": real_length}
@@ -112,7 +112,6 @@ class RLFullFlowNoDiffDataset(Dataset):
         return len(self.ipd_list)
 
     def __getitem__(self, item):
-        # print(self.ipd_list[item])
         stp = deepcopy(self.ipd_list[item])
         for i in range(len(self.ipd_list[item]) - 1, 0, -1):
             stp[i] = stp[i] - stp[i - 1]
@@ -137,7 +136,6 @@ class RLFullFlowNoDiffDataset(Dataset):
                   "real_length": real_length}
 
         ori_output = {
-            # "ipd": self.ipd_list[item][:self.seq_len - 1],
             "ipd": stp[:self.seq_len - 1],
             "size": self.size_list[item][:self.seq_len - 1],
         }
@@ -147,17 +145,4 @@ class RLFullFlowNoDiffDataset(Dataset):
         return batch
 
 if __name__ == '__main__':
-    args = recursive_namespace(read_yaml('/home/lzx/NetMasquerade/Pretrain/config/bert.yaml'))
-    rl_args = recursive_namespace(read_yaml('/home/lzx/NetMasquerade/Finetune/config/sac.yaml'))
-    data = list(feature_extract(read_flow_pkl(rl_args.trainer.train_data_pth)))
-    ipd, size = list(data[0]), list(data[1])
-    timevocab = TimeVocab(ipd)
-    sizevocab = SizeVocab(size)
-
-    data_iter = 0
-    train_dataset = RLFullFlowDataset(rl_args, timevocab, sizevocab, mode='test')
-    for _ in range(400):
-        initial_state, real_feat, src, dst, srcport, dstport = train_dataset[data_iter]
-        data_iter = data_iter + 1 if data_iter < len(train_dataset) - 1 else 0
-        print(data_iter, src)
-
+    pass

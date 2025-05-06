@@ -7,10 +7,7 @@ import torch.nn.functional as F
 import numpy as np
 
 from rl_utils import *
-# consider bi-gru?
-# gru + mask (with higher time complexity!)
 
-torch.set_printoptions(threshold=10000)
 class PolicyNet(torch.nn.Module):
     def __init__(self, timevocab_size, sizevocab_size, embedding_dim, hidden_dim, state_dim):
         super(PolicyNet, self).__init__()
@@ -19,38 +16,18 @@ class PolicyNet(torch.nn.Module):
         self.size_embedding = nn.Embedding(sizevocab_size, embedding_dim)
         self.rnn = nn.GRU(embedding_dim * 2, hidden_dim, batch_first=True)
         self.fc1 = nn.Linear(hidden_dim, 1)
-        self.fc2 = nn.Linear(state_dim, 2 * state_dim + 1)  # 1025 here!
+        self.fc2 = nn.Linear(state_dim, 2 * state_dim + 1)
 
     def forward(self, state):
         ipd_embed = self.ipd_embedding(state['flow_ipd'])
         size_embed = self.size_embedding(state['flow_size'])
         mask = generate_mask(state['real_length'] * 2 + 1, self.state_dim * 2 + 1, state['src_index'])
-        # print('mask:', mask)
-        # print(mask.shape)
         combined_seq = torch.cat((ipd_embed, size_embed), dim=-1)   # [bs, seq_len, embed_dim * 2]
         out, _ = self.rnn(combined_seq)
         scores = self.fc1(out).squeeze(-1)
         scores = self.fc2(scores)
-        # print(scores.shape)
         scores.masked_fill_(mask == 0, -1e9)
         return F.softmax(scores, dim=-1)
-
-# another version: mlp + mask
-# class PolicyNet(torch.nn.Module):
-#     def __init__(self, state_dim, hidden_dim, action_dim):
-#         super(PolicyNet, self).__init__()
-#         self.fc1 = torch.nn.Linear(state_dim, hidden_dim)
-#         self.fc2 = torch.nn.Linear(hidden_dim, action_dim)
-
-#     def forward(self, x, mask):
-#         # print('x:', x.dtype)
-#         # print(self.fc1.dtype)
-#         x = F.relu(self.fc1(x))
-#         scores = self.fc2(x)
-#         scores.masked_fill_(mask == 0, -float('inf'))
-
-#         return F.softmax(scores, dim=-1)
-
 
 class QValueNet(torch.nn.Module):
     def __init__(self, timevocab_size, sizevocab_size, embedding_dim, hidden_dim, state_dim):
@@ -73,30 +50,6 @@ class QValueNet(torch.nn.Module):
         # print(scores.shape)
         scores.masked_fill_(mask == 0, -1e9)
         return scores
-
-# class QValueNet(torch.nn.Module):
-#     def __init__(self, timevocab_size, sizevocab_size, embedding_dim, hidden_dim, seq_len):
-#         super(QValueNet, self).__init__()
-#         self.rnn = nn.GRU(embedding_dim, hidden_dim, batch_first=True)
-#         self.fc1 = nn.Linear(hidden_dim, 1)
-#         self.fc2 = nn.Linear(seq_len, 2 * seq_len + 1)  # 1025 here!
-
-#     def forward(self, state, mask):
-#         out, _ = self.rnn(x)
-#         scores = self.fc1(out).squeeze(-1)
-#         scores = self.fc2(scores)
-#         scores.masked_fill_(mask == 0, -float('inf'))
-#         return scores
-
-# class QValueNet(torch.nn.Module):
-#     def __init__(self, state_dim, hidden_dim, action_dim):
-#         super(QValueNet, self).__init__()
-#         self.fc1 = torch.nn.Linear(state_dim, hidden_dim)
-#         self.fc2 = torch.nn.Linear(hidden_dim, action_dim)
-
-#     def forward(self, x):
-#         x = F.relu(self.fc1(x))
-#         return self.fc2(x)
 
 
 class SAC:
@@ -136,9 +89,7 @@ class SAC:
 
     def take_action(self, state):
         state = self.transform_state(state)
-        # state = torch.tensor([state], dtype=torch.float).to(self.device)
         probs = self.actor(state)
-        # print('probs: ', probs[0][:20])
         action_dist = torch.distributions.Categorical(probs)
         action = action_dist.sample()
         return action.item()
@@ -147,7 +98,6 @@ class SAC:
         state = self.transform_state(state)
         with torch.no_grad():
             probs = self.actor(state)
-        # print('probs: ', probs)
         action = torch.argmax(probs, dim=-1)
         return action.item()
 
@@ -251,14 +201,8 @@ class SAC:
         state = self.transform_state(state)
         q_values_1 = self.critic_1(state)
         q_values_2 = self.critic_2(state)
-        # print(torch.min(q_values_1, q_values_2))
-        # print(torch.max(torch.min(q_values_1, q_values_2)))
         if action is None:
             max_q_value = torch.max(torch.min(q_values_1, q_values_2))
         else:
             max_q_value = torch.max(q_values_1.squeeze()[action], q_values_2.squeeze()[action])
-        # print(q_values_1.argmax().item(), q_values_2.argmax().item(), action)
-        # print(q_values_1[:10])
-        # print(q_values_2[:10])
-        # print(max_q_value.item(), torch.max(torch.min(q_values_1, q_values_2)).item())
         return max_q_value.item() > threshold

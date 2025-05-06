@@ -20,8 +20,6 @@ class ReplayBuffer:
         state, action, reward, next_state, done = zip(*transitions)
         if isinstance(state[0], dict):
             keys = state[0].keys()
-            # for key, value in state[0].items():
-            #     print(key, value.shape)
                 
             state = {key: torch.cat([s[key].unsqueeze(0) for s in state], dim=0) for key in keys}
 
@@ -103,23 +101,6 @@ def compute_advantage(gamma, lmbda, td_delta):
     advantage_list.reverse()
     return torch.tensor(advantage_list, dtype=torch.float)
 
-
-# def generate_mask(real_length, pad_length, mask_index):
-#     seq_idx = torch.arange(pad_length, device=real_length.device).unsqueeze(0)
-#     if len(real_length.shape) == 1 and real_length.shape[0] > 1:
-#         seq_idx = seq_idx.repeat(real_length.shape[0], 1)
-#         real_length_expanded = real_length.expand_as(seq_idx)
-#     else:
-#         real_length_expanded = real_length.expand(seq_idx.shape)
-
-#     expand_mask_index = torch.zeros(mask_index.shape[0], mask_index.shape[1] * 2 + 1, dtype=mask_index.dtype, device=mask_index.device)
-#     col = torch.arange(mask_index.shape[1], device=mask_index.device) * 2 + 1
-#     expand_mask_index[:, col] = mask_index
-#     expand_mask_index[:, torch.arange(mask_index.shape[1] * 2 + 1) % 2 == 0] = 1
-#     mask = (seq_idx > 3) & (seq_idx < real_length_expanded - 2) & expand_mask_index
-
-#     return mask
-
 def generate_mask(real_length, pad_length, mask_index):
     if real_length.dim() == 0:
         real_length = real_length.unsqueeze(0)
@@ -145,57 +126,18 @@ def generate_mask(real_length, pad_length, mask_index):
     return mask.squeeze()
 
 def plot_train_rewards(rewards, save_path, ylabel):
-    # Set modern aesthetics
     plt.style.use('seaborn-darkgrid')
     
-    # Create a color palette
     palette = plt.get_cmap('Set2')
-    
-    # Create the plot
+
     plt.figure(figsize=(10,5))
     plt.plot(rewards, color=palette(0))
     plt.title('Training Reward Over Episodes')
     plt.xlabel('Episodes')
     plt.ylabel(ylabel)
     
-    # Save the figure
     plt.savefig(save_path)
     plt.close()
-
-def socket_conn(HOST, PORT):
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.connect((HOST, PORT))
-    return s
-
-def send_events(sock, events):
-    """
-    events: List[Tuple[int,int]]  # (size, timestamp)
-    """
-    N = len(events)
-    header = struct.pack('!I', N)
-    body   = b''.join(struct.pack('!IQ', sz, ts)
-                      for sz, ts in events)
-    sock.sendall(header + body)  
-
-def receive_events(sock):
-    ack_buf = b''
-    while len(ack_buf) < 4:
-        chunk = sock.recv(4 - len(ack_buf))
-        if not chunk:
-            raise ConnectionError("controller: connection closed unexpectedly")
-        ack_buf += chunk
-    (ack,) = struct.unpack('!I', ack_buf)
-    return ack
-
-
+    
 if __name__ == '__main__':
-
-    a = [1, 3, 4]
-    b = torch.zeros(1, 5)
-    b[0, a] = 1
-
-    real_length = torch.tensor(3 * 2 + 1, device='cpu')
-    pad_length = torch.tensor(5 * 2 + 1, device='cpu')
-    mask = generate_mask(real_length, pad_length, b)
-
-    print(mask)
+    pass
