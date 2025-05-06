@@ -15,7 +15,7 @@ trainer:
   env_name: MLP
   figure_path:
   flow_save_pth:
-  bert_pth: /home/lzx/NetMasquerade/Pretrained_models/56_bi_attn_linear/BERTLM_model_mawi202306_sizebest.pth
+  bert_pth: ../pretrained_models/56_bi_attn_linear/BERTLM_model_mawi202306_sizebest.pth
 
 env:
   bad_ip:
