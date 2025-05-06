@@ -38,22 +38,14 @@ class BERT(nn.Module):
     def forward(self, flow_ipd, flow_size):
         # x: [bs, seq_len]
         # segment_info: [bs, seq_len]
-        # print('flow_ipd.max(),', end='\t')
-        # print(flow_ipd.max())
-        # attention masking for padded token
-        # torch.ByteTensor([batch_size, 1, seq_len, seq_len)
+        
         mask = (flow_size > 0).unsqueeze(1).repeat(1, flow_size.size(1), 1).unsqueeze(1)
         
-        # embedding the indexed sequence to sequence of vectors
         flow_ipd = self.ipd_embedding(flow_ipd)
-        # print('flow_ipd: ', flow_ipd)
         flow_size = self.size_embedding(flow_size)
-        # print('flow_size: ', flow_size)
 
-        # running over multiple transformer blocks
         for i, encoder in enumerate(self.encoder_blocks):
-            flow_ipd, flow_size = encoder.forward(flow_ipd, flow_size, mask)    # literally ipd_attn, size_attn
-            # print('flow_size_attention_', i, ': ', flow_size)
+            flow_ipd, flow_size = encoder.forward(flow_ipd, flow_size, mask)
         return flow_ipd, flow_size
 
 

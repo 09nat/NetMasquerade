@@ -37,9 +37,6 @@ class Transformer(nn.Module):
     def forward(self, enc, dec):
         # x: [bs, seq_len]
         # segment_info: [bs, seq_len]
-
-        # attention masking for padded token
-        # torch.ByteTensor([batch_size, 1, seq_len, seq_len)
         enc_mask = (enc > 0).unsqueeze(1).repeat(1, enc.size(1), 1).unsqueeze(1)
         dec_pad_mask = (dec > 0).unsqueeze(1).repeat(1, dec.size(1), 1).unsqueeze(1)
         dec_subsequence_mask = torch.from_numpy(np.triu(np.ones([dec.size(0), dec.size(1), dec.size(1)]), k=1)).byte()
