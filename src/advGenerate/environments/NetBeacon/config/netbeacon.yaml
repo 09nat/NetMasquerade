@@ -1,0 +1,16 @@
+data:
+  benign_train: traffic_data/fuzzing/benign_train.pkl
+  benign_test: traffic_data/fuzzing/benign_test.pkl
+  malicious_train: traffic_data/fuzzing/malicious_train.pkl
+  malicious_test: traffic_data/fuzzing/malicious_test.pkl
+
+trainer:
+  model_path: outputs/netbeacon/fuzzing.pkl
+  report_path: outputs/netbeacon/metrics.json
+  train_per_class: 100
+  seed: 512
+
+model:
+  phases: [2, 4, 8]
+  depth: 9
+  top_features: 10
