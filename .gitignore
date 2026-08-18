@@ -2,3 +2,19 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+
+/traffic_data/*
+!/traffic_data/.gitkeep
+!/traffic_data/fuzzing/
+/traffic_data/fuzzing/*
+!/traffic_data/fuzzing/benign_train.pkl
+!/traffic_data/fuzzing/benign_test.pkl
+!/traffic_data/fuzzing/malicious_train.pkl
+!/traffic_data/fuzzing/malicious_test.pkl
+
+# training artefacts
+/logs/
+/outputs/
+/src/advGenerate/checkpoints/
+/src/advGenerate/environments/*/checkpoints/*
+!/src/advGenerate/environments/*/checkpoints/.gitkeep
