@@ -1,5 +1,3 @@
-"""A deterministic per-phase NetBeacon-style flow classifier."""
-
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
@@ -9,8 +7,6 @@ DEFAULT_PHASES = [2, 4, 8]
 
 
 class NetBeacon:
-    """One shallow decision tree per observable packet-count phase."""
-
     def __init__(self, phases=None, depth=9, random_state=512):
         self.phases = list(phases or DEFAULT_PHASES)
         if not self.phases or self.phases != sorted(set(self.phases)):
