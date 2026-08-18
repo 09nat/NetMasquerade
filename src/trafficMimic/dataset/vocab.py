@@ -1,24 +1,25 @@
-import os
-import sys
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+"""Fixed vocabularies used by the released traffic-BERT checkpoint."""
 
-import torch
-import tqdm
 import pickle
+
 import numpy as np
-from utils import recursive_namespace, feature_extract, read_yaml, read_flow_pkl
 
 
-class Vocab(object):
+class _VocabUnpickler(pickle.Unpickler):
+    def find_class(self, module, name):
+        if module in {"dataset.vocab", "vocab"} and name in globals():
+            return globals()[name]
+        return super().find_class(module, name)
+
+
+class Vocab:
     def __init__(self, data, max_size):
-        '''
-        no use of '[cls]', '[sep]' in this project
-        '''
-        self.special_list = ['[pad]', '[unk]', '[cls]', '[sep]', '[mask]']
+        self.special_list = ["[pad]", "[unk]", "[cls]", "[sep]", "[mask]"]
         self.special_size = len(self.special_list)
-        self.reverse_list = {token: i for i, token in enumerate(self.special_list)}
+        self.reverse_list = {token: index for index, token in enumerate(self.special_list)}
         self.pad_index = 0
         self.unk_index = 1
+        # These historical IDs are intentionally retained for checkpoint compatibility.
         self.eos_index = 2
         self.sos_index = 3
         self.mask_index = 4
@@ -26,158 +27,127 @@ class Vocab(object):
         self.max_size = max_size + self.special_size
 
     def __len__(self):
+        # The original checkpoint contains one unused final embedding row.
         return self.max_size + 1
 
-    def to_seq(self, sentence, seq_len, with_eos=False, with_sos=False) -> list:
-        pass
+    @property
+    def valid_index_start(self):
+        return self.special_size
 
-    def from_seq(self, seq, with_pad=False):
-        pass
+    @property
+    def valid_index_stop(self):
+        return self.max_size
 
-    def itos(self, index):
-        pass
-
-    def stoi(self, word):
-        pass
-
-    @staticmethod
-    def load_vocab(vocab_path: str) -> 'Vocab':
-        with open(vocab_path, 'rb') as f:
-            return pickle.load(f)
+    @classmethod
+    def load_vocab(cls, vocab_path):
+        with open(vocab_path, "rb") as handle:
+            vocab = _VocabUnpickler(handle).load()
+        if not isinstance(vocab, Vocab):
+            raise TypeError("{} does not contain a Vocab".format(vocab_path))
+        return vocab
 
     def save_vocab(self, vocab_path):
         original_data = self.data
         self.data = None
-        with open(vocab_path, 'wb') as f:
-            pickle.dump(self, f)
-        self.data = original_data
+        try:
+            with open(vocab_path, "wb") as handle:
+                pickle.dump(self, handle, protocol=4)
+        finally:
+            self.data = original_data
+
+    def from_seq(self, sequence, with_pad=False):
+        sequence = list(sequence)
+        if not with_pad:
+            while sequence and sequence[-1] == self.pad_index:
+                sequence.pop()
+        return [self.itos(index) for index in sequence]
 
 
 class TimeVocab(Vocab):
     def __init__(self, data, max_size=50, upper_bound=300, lower_bound=None):
-        super(TimeVocab, self).__init__(data, max_size)
-        if upper_bound is not None:
-            self.upper_bound = upper_bound
-        else:
-            self.upper_bound = max(max(i[1:]) for i in self.data)
-            
-        if lower_bound is not None:
-            self.lower_bound = lower_bound
-        else:
-            self.lower_bound = min(min(i[1:]) for i in self.data)
+        super().__init__(data, max_size)
+        self.upper_bound = upper_bound if upper_bound is not None else max(
+            max(item[1:]) for item in data)
+        self.lower_bound = lower_bound if lower_bound is not None else min(
+            min(item[1:]) for item in data)
         self.bins = self.binning()
-        
 
-    def binning(self, ):
-        min_val = np.log10(self.lower_bound + 1e-9)
-        max_val = np.log10(self.upper_bound + 1e-9)
-        bin_width = (max_val - min_val) / (self.max_size - self.special_size)
-        bins = np.arange(min_val, max_val, bin_width)
-
-        return bins
-    
+    def binning(self):
+        minimum = np.log10(self.lower_bound + 1e-9)
+        maximum = np.log10(self.upper_bound + 1e-9)
+        return np.linspace(minimum, maximum,
+                           self.max_size - self.special_size,
+                           endpoint=False)
 
     def itos(self, index):
+        index = int(index)
         if index < self.special_size:
             return self.special_list[index]
-        if index >= self.max_size:
+        if not self.valid_index_start <= index < self.valid_index_stop:
+            return self.special_list[self.unk_index]
+        bucket = index - self.special_size
+        left = self.bins[bucket]
+        right = (self.bins[bucket + 1] if bucket + 1 < len(self.bins)
+                 else np.log10(self.upper_bound + 1e-9))
+        return float(np.power(10.0, (left + right) / 2.0))
+
+    def stoi(self, value):
+        if isinstance(value, str) and value in self.reverse_list:
+            return self.reverse_list[value]
+        value = float(value)
+        if value < self.lower_bound or value >= self.upper_bound:
             return self.unk_index
-        if index == self.max_size - 1:
-            return self.bins[-1]
-        index -= self.special_size
-        return np.power(10, (self.bins[index + 1] + self.bins[index]) / 2.0)
+        bucket = int(np.digitize(np.log10(value + 1e-9), self.bins)) - 1
+        bucket = min(max(bucket, 0), len(self.bins) - 1)
+        return bucket + self.special_size
 
-
-    def stoi(self, word):
-        if word in self.reverse_list:
-            return self.reverse_list[word]
-        if word + 1e-9 >= self.upper_bound:
-            return self.unk_index
-        if word + 1e-9 < self.bins[0]:
-            return self.unk_index
-        return np.digitize(np.log10(word + 1e-9), self.bins) + self.special_size - 1
-
-    def to_seq(self, sentence, seq_len, with_eos=False, with_sos=False, with_ori_len=False) -> list:
-        seq = [self.stoi(word) for word in sentence]
-
-        if with_eos:
-            seq += [self.eos_index]
-        if with_sos:
-            seq = [self.sos_index] + seq
-
-        origin_seq_len = len(seq)
-
-        if seq_len is None:
-            pass
-        elif len(seq) <= seq_len:
-            seq += [self.pad_index for _ in range(seq_len - len(seq))]
-        else:
-            seq = seq[:seq_len]
-
-        return (seq, origin_seq_len) if with_ori_len else seq
-
-    def from_seq(self, seq, with_pad=False):
-        sentence = [self.itos(index) for index in seq]
-        cnt = len(sentence)
-        if not with_pad:
-            while cnt > 0 and sentence[cnt - 1] == 0:
-                cnt -= 1
-        return sentence[: cnt]
+    def to_seq(self, sentence, seq_len, with_eos=False, with_sos=False,
+               with_ori_len=False):
+        sequence = [self.stoi(value) for value in sentence]
+        return _finish_sequence(self, sequence, seq_len, with_eos, with_sos,
+                                with_ori_len)
 
 
 class SizeVocab(Vocab):
     def __init__(self, data, ratio=1):
         self.ratio = ratio
-        max_size = 1600 // ratio
-        super(SizeVocab, self).__init__(data, max_size)
+        super().__init__(data, 1600 // ratio)
 
-    def hash(self, word):
-        return int(word) // self.ratio
-    
+    def hash(self, value):
+        return int(value) // self.ratio
+
     def rehash(self, index):
         return int(index * self.ratio)
 
     def itos(self, index):
+        index = int(index)
         if index < self.special_size:
             return self.special_list[index]
-        if index > self.max_size:
+        if not self.valid_index_start <= index < self.valid_index_stop:
             return self.special_list[self.unk_index]
         return self.rehash(index - self.special_size)
 
-    def stoi(self, word):
-        if word in self.reverse_list:
-            return self.reverse_list[word]
-        if self.hash(word) + self.special_size >= self.max_size:
-            return self.unk_index
-        return self.hash(word) + self.special_size
+    def stoi(self, value):
+        if isinstance(value, str) and value in self.reverse_list:
+            return self.reverse_list[value]
+        index = self.hash(value) + self.special_size
+        return (index if self.valid_index_start <= index < self.valid_index_stop
+                else self.unk_index)
 
-    def to_seq(self, sentence, seq_len, with_eos=False, with_sos=False, with_ori_len=False) -> list:
-        seq = [self.stoi(word) for word in sentence]
-
-        if with_eos:
-            seq += [self.eos_index]
-        if with_sos:
-            seq = [self.sos_index] + seq
-
-        origin_seq_len = len(seq)
-
-        if seq_len is None:
-            pass
-        elif len(seq) <= seq_len:
-            seq += [self.pad_index for _ in range(seq_len - len(seq))]
-        else:
-            seq = seq[:seq_len]
-
-        return (seq, origin_seq_len) if with_ori_len else seq
-
-    def from_seq(self, seq, with_pad=False):
-        sentence = [self.itos(index) for index in seq]
-        cnt = len(sentence)
-        if not with_pad:
-            while cnt > 0 and sentence[cnt - 1] == 0:
-                cnt -= 1
-        return sentence[: cnt]
+    def to_seq(self, sentence, seq_len, with_eos=False, with_sos=False,
+               with_ori_len=False):
+        sequence = [self.stoi(value) for value in sentence]
+        return _finish_sequence(self, sequence, seq_len, with_eos, with_sos,
+                                with_ori_len)
 
 
-if __name__ == '__main__':
-    pass
+def _finish_sequence(vocab, sequence, seq_len, with_eos, with_sos, with_ori_len):
+    if with_eos:
+        sequence.append(vocab.eos_index)
+    if with_sos:
+        sequence.insert(0, vocab.sos_index)
+    original_length = len(sequence)
+    if seq_len is not None:
+        sequence = sequence[:seq_len]
+        sequence.extend([vocab.pad_index] * (seq_len - len(sequence)))
+    return (sequence, original_length) if with_ori_len else sequence

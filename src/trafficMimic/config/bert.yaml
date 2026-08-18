@@ -1,30 +1,37 @@
+# NetMasquerade stage 1: masked-token model of benign traffic (traffic-BERT).
+# All relative paths resolve from the repository root.
+#
+# The repository ships a checkpoint trained on the MAWI 2023-06-11 backbone
+# trace, so this config only needs to be run if you want to retrain from
+# scratch on your own benign traffic.  `advGenerate` reads the architecture
+# hyper-parameters (`model:`) and the vocab paths from here.
 trainer:
   train_data_pth: [
-    ../traffic_data/mawi/flow/202306.pcap.pkl
+    traffic_data/mawi/202306111400.pcap.pkl
   ]
   test_data_pth: [
-    ../traffic_data/mawi/flow/test.pkl
+    traffic_data/mawi/test.pkl
   ]
 
-  load_save_pth: ../pretrained_models/56_bi_attn_linear/BERTLM_model_mawi202306_sizebest.pth
-  timevocab_pth: ./trafficMimic/dataset/timevocab_56.pkl
-  sizevocab_pth: ./trafficMimic/dataset/sizevocab_1606.pkl
-  model_save_pth: ../pretrained_models/56_bi_attn_linear/BERTLM_model_mawi202306_sizebest.pth
-  device: 0
+  timevocab_pth: src/trafficMimic/dataset/timevocab_56.pkl
+  sizevocab_pth: src/trafficMimic/dataset/sizevocab_1606.pkl
+  # resume from an existing checkpoint if it exists; null to start from scratch
+  load_save_pth: pretrained_models/traffic_bert/BERTLM_mawi0611_sizebest.pth
+  # prefix; the trainer appends `_ep<N>.pth`, `_ipdbest.pth`, `_sizebest.pth`
+  model_save_pth: pretrained_models/traffic_bert/BERTLM_mawi0611
+  device: cuda:0
+  seed: 512
   batch_size: 64
   epochs: 300
   log_frequency: 10
   optimizer:
     type: 'AdamW'
     lr: 0.001
-    beta: (0.9, 0.999)
+    beta: [0.9, 0.999]
     weight_decay: 0.01
-    warmup_steps: 10000
-
 
 model:
   seq_len: 512
-  f_features: 2
   hidden: 128
   d_ff: 512
   n_layers: 6

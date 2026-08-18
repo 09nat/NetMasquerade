@@ -1,89 +1,68 @@
-import os
-import sys
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+"""Masked-language-model dataset for optional traffic-BERT retraining."""
+
 import random
+
 import torch
-from torch.utils.data import Dataset, DataLoader
-from utils import feature_extract, read_flow_pkl
-from dataset.vocab import *
+from torch.utils.data import Dataset
+
+from trafficMimic.utils import feature_extract, read_flow_pkl, valid_flows
+
 
 class FlowDataset(Dataset):
-    def __init__(self, args, timevocab, sizevocab, train=False) -> None:
-        super(Dataset, self).__init__()
+    def __init__(self, args, timevocab, sizevocab, train=False):
         self.seq_len = args.model.seq_len
-        if train:
-            self.data = list(feature_extract(read_flow_pkl(args.trainer.train_data_pth)))
-        else:
-            self.data = list(feature_extract(read_flow_pkl(args.trainer.test_data_pth)))
-
+        path = (args.trainer.train_data_pth if train
+                else args.trainer.test_data_pth)
+        flows = valid_flows(read_flow_pkl(path))
+        self.ipd_list, self.size_list = feature_extract(flows)
         self.timevocab = timevocab
         self.sizevocab = sizevocab
 
-        self.ipd_list, self.size_list = list(self.data[0]), list(self.data[1])
-
-
-    def __len__(self, ):
+    def __len__(self):
         return len(self.ipd_list)
 
     def __getitem__(self, item):
-        flow_ipd = self.timevocab.to_seq(self.ipd_list[item], None)
-        flow_size = self.sizevocab.to_seq(self.size_list[item], None)
+        max_payload = self.seq_len - 2
+        ipd = self.timevocab.to_seq(self.ipd_list[item][:max_payload], None)
+        size = self.sizevocab.to_seq(self.size_list[item][:max_payload], None)
+        ipd, ipd_label = self.random_word(ipd, self.timevocab)
+        size, size_label = self.random_word(size, self.sizevocab)
 
-        flow_ipd_random, flow_ipd_label = self.random_word(flow_ipd, self.timevocab)
-        flow_size_random, flow_size_label = self.random_word(flow_size, self.sizevocab)
+        ipd = [self.timevocab.sos_index] + ipd + [self.timevocab.eos_index]
+        size = [self.sizevocab.sos_index] + size + [self.sizevocab.eos_index]
+        ipd_label = [0] + ipd_label + [0]
+        size_label = [0] + size_label + [0]
+        real_length = len(size)
 
-        flow_ipd = [self.timevocab.sos_index] + flow_ipd_random + [self.timevocab.eos_index]
-        flow_size = [self.sizevocab.sos_index] + flow_size_random + [self.sizevocab.eos_index]
+        padding = self.seq_len - real_length
+        ipd.extend([self.timevocab.pad_index] * padding)
+        size.extend([self.sizevocab.pad_index] * padding)
+        ipd_label.extend([0] * padding)
+        size_label.extend([0] * padding)
+        output = {
+            "flow_ipd": ipd,
+            "flow_size": size,
+            "flow_ipd_label": ipd_label,
+            "flow_size_label": size_label,
+            "real_length": real_length,
+        }
+        return {key: torch.tensor(value, dtype=torch.long)
+                for key, value in output.items()}
 
-        real_length = len(flow_size)
-
-        flow_ipd_label = [self.timevocab.pad_index] + flow_ipd_label + [self.timevocab.pad_index]
-        flow_size_label = [self.sizevocab.pad_index] + flow_size_label + [self.sizevocab.pad_index]
-
-        flow_ipd = flow_ipd[:self.seq_len]
-        flow_size = flow_size[:self.seq_len]
-        flow_ipd_label = flow_ipd_label[:self.seq_len]
-        flow_size_label = flow_size_label[:self.seq_len]
-
-        padding = [self.timevocab.pad_index for _ in range(self.seq_len - len(flow_ipd))]
-        flow_ipd.extend(padding), flow_size.extend(padding), flow_ipd_label.extend(padding), flow_size_label.extend(padding)
-
-        output = {"flow_ipd": flow_ipd,
-                  "flow_size": flow_size,
-                  "flow_ipd_label": flow_ipd_label,
-                  "flow_size_label": flow_size_label,
-                  "real_length": real_length}
-
-        return {key: torch.tensor(value) for key, value in output.items()}
-
-    def random_word(self, tokens, vocab):
-        output_label = []
-        for i, token in enumerate(tokens):
-            prob = random.random()
-            if prob < 0.15:
-                prob /= 0.15
-
-                # 80% randomly change token to mask token
-                if prob < 0.8:
-                    tokens[i] = vocab.mask_index
-
-                # 10% randomly change token to random token
-                elif prob < 0.9:
-                    # tokens[i] = random.randrange(len(vocab))
-                    tokens[i] = random.randint(5, vocab.__len__() - 1)
-
-                # 10% ratndomly change token to current token
-                else:
-                    tokens[i] = vocab.stoi(token)
-
-                output_label.append(token)
-
-            else:
-                tokens[i] = token
-                output_label.append(0)
-        return tokens, output_label
-
-
-
-if __name__ == '__main__':
-    pass
+    @staticmethod
+    def random_word(tokens, vocab):
+        labels = []
+        for index, token in enumerate(tokens):
+            probability = random.random()
+            if probability >= 0.15:
+                labels.append(0)
+                continue
+            labels.append(token)
+            probability /= 0.15
+            if probability < 0.8:
+                tokens[index] = vocab.mask_index
+            elif probability < 0.9:
+                tokens[index] = random.randrange(vocab.valid_index_start,
+                                                  vocab.valid_index_stop)
+            # final 10% intentionally keeps the already-tokenized ID unchanged
+        return tokens, labels
