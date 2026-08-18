@@ -1,0 +1,7 @@
+-t e
+-T fields
+-E separator=,
+-e ip.src -e ip.dst -e frame.time_epoch -e ip.hdr_len -e ip.dsfield -e ip.ttl -e ip.len -e ip.proto 
+-e tcp.hdr_len -e tcp.window_size_value -e udp.length -e tcp.srcport -e tcp.dstport -e udp.srcport -e udp.dstport
+-Y "(ip.proto==6)||(ip.proto==17)"
+

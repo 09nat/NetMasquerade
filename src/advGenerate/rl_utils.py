@@ -1,143 +1,63 @@
-from tqdm import tqdm
-import numpy as np
-import torch
+"""Replay storage and legal-action masking for discrete SAC."""
+
 import collections
 import random
-import matplotlib.pyplot as plt
-import socket
-import struct
+
+import torch
+
+
+def clone_state(state, device="cpu"):
+    """Detach a state snapshot so later environment edits cannot overwrite it."""
+    return {name: value.detach().clone().to(device)
+            for name, value in state.items()}
 
 
 class ReplayBuffer:
     def __init__(self, capacity):
-        self.buffer = collections.deque(maxlen=capacity) 
+        self.buffer = collections.deque(maxlen=int(capacity))
 
-    def add(self, state, action, reward, next_state, done): 
-        self.buffer.append((state, action, reward, next_state, done)) 
+    def add(self, state, action, reward, next_state, done):
+        self.buffer.append((clone_state(state), int(action), float(reward),
+                            clone_state(next_state), bool(done)))
 
-    def sample(self, batch_size): 
-        transitions = random.sample(self.buffer, batch_size)
-        state, action, reward, next_state, done = zip(*transitions)
-        if isinstance(state[0], dict):
-            keys = state[0].keys()
-                
-            state = {key: torch.cat([s[key].unsqueeze(0) for s in state], dim=0) for key in keys}
+    def sample(self, batch_size):
+        transitions = random.sample(self.buffer, int(batch_size))
+        states, actions, rewards, next_states, dones = zip(*transitions)
+        state_batch = {key: torch.stack([state[key] for state in states])
+                       for key in states[0]}
+        next_batch = {key: torch.stack([state[key] for state in next_states])
+                      for key in next_states[0]}
+        return state_batch, actions, rewards, next_batch, dones
 
-        if isinstance(next_state[0], dict):
-            keys = next_state[0].keys()
-            next_state = {key: torch.cat([s[key].unsqueeze(0) for s in next_state]) for key in keys}
-        
-        return state, action, reward, next_state, done 
-
-    def size(self): 
+    def __len__(self):
         return len(self.buffer)
 
-def moving_average(a, window_size):
-    cumulative_sum = np.cumsum(np.insert(a, 0, 0)) 
-    middle = (cumulative_sum[window_size:] - cumulative_sum[:-window_size]) / window_size
-    r = np.arange(1, window_size-1, 2)
-    begin = np.cumsum(a[:window_size-1])[::2] / r
-    end = (np.cumsum(a[:-window_size:-1])[::2] / r)[::-1]
-    return np.concatenate((begin, middle, end))
 
-def train_on_policy_agent(env, agent, num_episodes):
-    return_list = []
-    for i in range(10):
-        with tqdm(total=int(num_episodes/10), desc='Iteration %d' % i) as pbar:
-            for i_episode in range(int(num_episodes/10)):
-                episode_return = 0
-                transition_dict = {'states': [], 'actions': [], 'next_states': [], 'rewards': [], 'dones': []}
-                state = env.reset()
-                done = False
-                while not done:
-                    action = agent.take_action(state)
-                    next_state, reward, done, _ = env.step(action)
-                    transition_dict['states'].append(state)
-                    transition_dict['actions'].append(action)
-                    transition_dict['next_states'].append(next_state)
-                    transition_dict['rewards'].append(reward)
-                    transition_dict['dones'].append(done)
-                    state = next_state
-                    episode_return += reward
-                return_list.append(episode_return)
-                agent.update(transition_dict)
-                if (i_episode+1) % 10 == 0:
-                    pbar.set_postfix({'episode': '%d' % (num_episodes/10 * i + i_episode+1), 'return': '%.3f' % np.mean(return_list[-10:])})
-                pbar.update(1)
-    return return_list
+def generate_mask(real_length, state_dim, src_index):
+    """Return a boolean mask for ``2 * state_dim + 1`` actions.
 
-def train_off_policy_agent(env, agent, num_episodes, replay_buffer, minimal_size, batch_size):
-    return_list = []
-    for i in range(10):
-        with tqdm(total=int(num_episodes/10), desc='Iteration %d' % i) as pbar:
-            for i_episode in range(int(num_episodes/10)):
-                episode_return = 0
-                state = env.reset()
-                done = False
-                while not done:
-                    action = agent.take_action(state)
-                    next_state, reward, done, _ = env.step(action)
-                    replay_buffer.add(state, action, reward, next_state, done)
-                    state = next_state
-                    episode_return += reward
-                    if replay_buffer.size() > minimal_size:
-                        b_s, b_a, b_r, b_ns, b_d = replay_buffer.sample(batch_size)
-                        transition_dict = {'states': b_s, 'actions': b_a, 'next_states': b_ns, 'rewards': b_r, 'dones': b_d}
-                        agent.update(transition_dict)
-                return_list.append(episode_return)
-                if (i_episode+1) % 10 == 0:
-                    pbar.set_postfix({'episode': '%d' % (num_episodes/10 * i + i_episode+1), 'return': '%.3f' % np.mean(return_list[-10:])})
-                pbar.update(1)
-    return return_list
-
-
-def compute_advantage(gamma, lmbda, td_delta):
-    td_delta = td_delta.detach().numpy()
-    advantage_list = []
-    advantage = 0.0
-    for delta in td_delta[::-1]:
-        advantage = gamma * lmbda * advantage + delta
-        advantage_list.append(advantage)
-    advantage_list.reverse()
-    return torch.tensor(advantage_list, dtype=torch.float)
-
-def generate_mask(real_length, pad_length, mask_index):
+    ``2 * position`` inserts before a payload/end token.  ``2 * position + 1``
+    modifies an attacker-owned payload IPD.  Start/end/padding tokens cannot be
+    modified, and insertion is disabled when the token sequence is full.
+    """
     if real_length.dim() == 0:
         real_length = real_length.unsqueeze(0)
+    if src_index.dim() == 1:
+        src_index = src_index.unsqueeze(0)
+    batch = real_length.shape[0]
+    mask = torch.zeros((batch, 2 * state_dim + 1), dtype=torch.bool,
+                       device=real_length.device)
+    positions = torch.arange(state_dim, device=real_length.device).unsqueeze(0)
+    lengths = real_length.view(-1, 1)
 
-    seq_idx = torch.arange(pad_length, device=real_length.device).unsqueeze(0)
-
-    if len(real_length.shape) == 1 and real_length.shape[0] > 1:
-        seq_idx = seq_idx.repeat(real_length.shape[0], 1)
-        real_length_expanded = real_length.unsqueeze(1).expand_as(seq_idx)
-    else:
-        real_length_expanded = real_length.expand(seq_idx.shape)
-    
-    if mask_index.dim() == 1:
-        mask_index = mask_index.unsqueeze(0)
-    
-    expand_mask_index = torch.zeros(mask_index.shape[0], mask_index.shape[1] * 2 + 1, dtype=mask_index.dtype, device=mask_index.device)
-    col = torch.arange(mask_index.shape[1], device=mask_index.device) * 2 + 1
-    expand_mask_index[:, col] = mask_index
-    expand_mask_index[:, torch.arange(mask_index.shape[1] * 2 + 1) % 2 == 0] = 1
-    
-    mask = (seq_idx > 3) & (seq_idx < real_length_expanded - 2) & expand_mask_index
-
-    return mask.squeeze()
-
-def plot_train_rewards(rewards, save_path, ylabel):
-    plt.style.use('seaborn-darkgrid')
-    
-    palette = plt.get_cmap('Set2')
-
-    plt.figure(figsize=(10,5))
-    plt.plot(rewards, color=palette(0))
-    plt.title('Training Reward Over Episodes')
-    plt.xlabel('Episodes')
-    plt.ylabel(ylabel)
-    
-    plt.savefig(save_path)
-    plt.close()
-    
-if __name__ == '__main__':
-    pass
+    can_insert = ((positions >= 1) & (positions <= lengths - 1) &
+                  (lengths < state_dim))
+    can_modify = ((positions >= 1) & (positions < lengths - 1) &
+                  src_index.bool())
+    even_columns = 2 * torch.arange(state_dim, device=real_length.device)
+    odd_columns = even_columns + 1
+    mask[:, even_columns] = can_insert
+    mask[:, odd_columns] = can_modify
+    if not torch.all(mask.any(dim=1)):
+        raise ValueError("observation has no legal packet-edit action")
+    return mask.squeeze(0) if batch == 1 else mask

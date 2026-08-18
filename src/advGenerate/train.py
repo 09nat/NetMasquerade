@@ -1,246 +1,193 @@
-import os
-import sys
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-import torch
-import torch.nn as nn
 import argparse
-import random
-import gym
+import json
 import time
+
 import numpy as np
-from environments.environment import *
-from trafficMimic.utils import *
-from trafficMimic.dataset import TimeVocab, SizeVocab
-from rl_utils import *
-from sac import SAC
-from environments.environment import *
-from PacketProcessing import Flow
-import dill as pickle
+from tqdm import tqdm
+
+from advGenerate.environments.environment import make_env
+from advGenerate.rl_utils import ReplayBuffer
+from advGenerate.sac import SAC
+from trafficMimic.dataset.vocab import SizeVocab, TimeVocab
+from trafficMimic.utils import (read_yaml, recursive_namespace,
+                                resolve_repo_path, set_device, set_seed)
+
 
 class Trainer:
     def __init__(self, rl_args, bert_args):
         self.rl_args = rl_args
         self.bert_args = bert_args
-        self.device = set_device(self.rl_args.trainer.device)
+        self.device = set_device(rl_args.trainer.device)
+        timevocab = TimeVocab.load_vocab(resolve_repo_path(
+            bert_args.trainer.timevocab_pth))
+        sizevocab = SizeVocab.load_vocab(resolve_repo_path(
+            bert_args.trainer.sizevocab_pth))
+        self.replay_buffer = ReplayBuffer(rl_args.trainer.buffer_size)
+        model = rl_args.model
+        self.agent = SAC(
+            len(timevocab), len(sizevocab), model.embedding_dim,
+            model.state_dim, model.hidden_dim, model.actor_lr,
+            model.critic_lr, model.alpha_lr, model.target_entropy,
+            model.tau, model.gamma, self.device)
 
-        self.env = None
+    @staticmethod
+    def _next_detected(env):
+        """Return the next initially detected flow, excluding trivial evasions."""
+        for _attempt in range(len(env.dataset)):
+            state = env.reset()
+            if env.get_res() == 1:
+                env.evaluator.reset_query_count()
+                return state
+        raise RuntimeError("target model detects no flows in this dataset")
 
-        # random.seed(512)
-        # np.random.seed(512)
-        # torch.manual_seed(512)
+    def train(self):
+        env = make_env(self.rl_args, self.bert_args, "train")
+        episodes = int(self.rl_args.trainer.episodes)
+        successes, returns = [], []
+        started = time.perf_counter()
+        progress = tqdm(range(episodes), desc="training SAC", unit="flow")
+        for _ in progress:
+            state = self._next_detected(env)
+            done = False
+            episode_return = 0.0
+            evaded = False
+            while not done:
+                action = self.agent.take_action(state)
+                next_state, reward, done, evaded = env.step(action)
+                self.replay_buffer.add(state, action, reward, next_state, done)
+                state = next_state
+                episode_return += reward
+                ready = max(int(self.rl_args.trainer.minimal_size),
+                            int(self.rl_args.trainer.batch_size))
+                if len(self.replay_buffer) >= ready:
+                    batch = self.replay_buffer.sample(
+                        self.rl_args.trainer.batch_size)
+                    transition = dict(zip(
+                        ("states", "actions", "rewards", "next_states", "dones"),
+                        batch))
+                    self.agent.update(transition)
+            successes.append(int(evaded))
+            returns.append(episode_return)
+            window = min(100, len(successes))
+            rolling_asr = float(np.mean(successes[-window:]))
+            progress.set_postfix(asr="{:.3f}".format(rolling_asr),
+                                 replay=len(self.replay_buffer))
 
-        self.replay_buffer = ReplayBuffer(self.rl_args.trainer.buffer_size)
-        self.agent = SAC(self.rl_args.model.timevocab_size, self.rl_args.model.sizevocab_size,  
-                    self.rl_args.model.embedding_dim, self.rl_args.model.state_dim, self.rl_args.model.hidden_dim, 
-                    self.rl_args.model.actor_lr, self.rl_args.model.critic_lr, 
-                    self.rl_args.model.alpha_lr, self.rl_args.model.target_entropy, self.rl_args.model.tau, 
-                    self.rl_args.model.gamma, self.device)
+        self.agent.save_model(resolve_repo_path(
+            self.rl_args.trainer.model_save_pth))
+        return {
+            "episodes": episodes,
+            "training_asr": float(np.mean(successes)),
+            "mean_return": float(np.mean(returns)),
+            "elapsed_seconds": time.perf_counter() - started,
+        }
 
-        
-    def train_off_policy_agent(self, ): 
-        if self.rl_args.trainer.env_name == 'KitSune':
-            self.env = KitSuneEnv(rl_args, bert_args)
-        elif self.rl_args.trainer.env_name == 'LSTM':
-            self.env = LSTMEnv(rl_args, bert_args)
-        elif self.rl_args.trainer.env_name == 'NetBeacon':
-            self.env = NetBeaconEnv(rl_args, bert_args)
-        elif self.rl_args.trainer.env_name == 'Flowlens':
-            self.env = FlowlensEnv(rl_args, bert_args)
-        elif self.rl_args.trainer.env_name == 'Whisper':
-            self.env = WhisperEnv(rl_args, bert_args)
-        elif self.rl_args.trainer.env_name == 'MLP':
-            self.env = MLPEnv(rl_args, bert_args)
-            
-            
-        num_episodes = self.rl_args.trainer.episodes
-        return_list = []
-        asr_list = []
-        qvalues = []
-        best_model_asr = -1
-        state_record = []
-        with tqdm(total=num_episodes, desc="Training Progress") as pbar:
-            for i_episode in range(num_episodes):
-                episode_return = 0
-                state = self.env.reset()
-                done = False
-                state_record.append(state)
-                while not done:
-                    action = self.agent.take_action(state)
-                    next_state, reward, done, result = self.env.step(action)
-
-                    if done:
-                        with torch.no_grad():
-                            q_values_1 = self.agent.critic_1(state)
-                            q_values_2 = self.agent.critic_2(state)
-                        max_q_value = torch.max(q_values_1.squeeze()[action], q_values_2.squeeze()[action])
-                        qvalues.append(max_q_value.item())
-
-                    self.replay_buffer.add(state, action, reward, next_state, done)
-                    state = next_state
-                    episode_return += reward
-                    if self.replay_buffer.size() > self.rl_args.trainer.minimal_size:
-                        b_s, b_a, b_r, b_ns, b_d = self.replay_buffer.sample(self.rl_args.trainer.batch_size)
-                        transition_dict = {'states': b_s, 'actions': b_a, 'next_states': b_ns, 'rewards': b_r, 'dones': b_d}
-                        self.agent.update(transition_dict)
-                return_list.append(episode_return)
-                asr_list.append(result)
-                if (i_episode + 1) % 5 == 0:
-                    pbar.set_postfix({
-                                        'episode': i_episode + 1,
-                                        'average_return': f"{np.mean(return_list[-100:]):.4f}",
-                                        'average_asr': f"{np.mean(asr_list[-100:]):.4f}"
-                                    })
-
-                pbar.update(1)
-                
-                if (i_episode + 1) % self.rl_args.trainer.test_episodes == 0:
-                    asr = np.mean(asr_list[-self.rl_args.trainer.test_episodes:])
-                    for item in state_record[-self.rl_args.trainer.test_episodes:-self.rl_args.trainer.test_episodes + 5]:
-                        print(item['flow_ipd'][:5])
-                    if asr > best_model_asr:
-                        best_model_asr = asr
-                        self.agent.save_model(self.rl_args.trainer.model_save_pth)
-                        print('best model saved')
-
-                if (i_episode + 1) % 100 == 0:
-                    if self.rl_args.trainer.fig_save_pth is not None:
-                        plot_train_rewards(qvalues, save_path=self.rl_args.trainer.fig_save_pth.format(i_episode + 1), ylabel='Critic Max Qvalue')
-                    if best_model_asr < 0:
-                        self.agent.save_model(self.rl_args.trainer.model_save_pth)
-                        print('no model before, model on {} saved'.format(i_episode + 1))
-                        print('asr:', np.mean(asr_list[-100:]))
-                        
-        return return_list
-    
-    
-    def evaluate(self, eval_episodes=10):
-        if self.rl_args.trainer.env_name == 'KitSune':
-            self.env = KitSuneEnv(rl_args, bert_args, 'test')
-        elif self.rl_args.trainer.env_name == 'LSTM':
-            self.env = LSTMEnv(rl_args, bert_args, 'test')
-        elif self.rl_args.trainer.env_name == 'NetBeacon':
-            self.env = NetBeaconEnv(rl_args, bert_args, 'test')
-        elif self.rl_args.trainer.env_name == 'Flowlens':
-            self.env = FlowlensEnv(rl_args, bert_args, 'test')
-        elif self.rl_args.trainer.env_name == 'Whisper':
-            self.env = WhisperEnv(rl_args, bert_args, 'test')
-        elif self.rl_args.trainer.env_name == 'MLP':
-            self.env = MLPEnv(rl_args, bert_args, 'test')
-            
-        total_result= []
-        q_values = []
-        step_list = []
-        
-        if self.rl_args.trainer.flow_save_pth is not None:
-            packet_feature = {
-                'ipd': [],
-                'size': [],
-                'ori': [],
-                'src': [],
-                'first_timestamp': []
-            }
-
-        with tqdm(range(eval_episodes), desc='evaluating...') as pbar:
-            for _ in pbar:
-                state = self.env.reset()
+    def evaluate(self, eval_episodes, feedback):
+        """Evaluate conditional ASR on flows initially detected as malicious."""
+        env = make_env(self.rl_args, self.bert_args, "test")
+        attempted = initially_detected = successes = 0
+        edits, attack_queries = [], []
+        started = time.perf_counter()
+        progress = tqdm(range(int(eval_episodes)),
+                        desc="evaluation ({})".format(
+                            "feedback" if feedback else "no feedback"),
+                        unit="flow")
+        for _ in progress:
+            state = env.reset()
+            attempted += 1
+            baseline = env.get_res()
+            env.evaluator.reset_query_count()
+            if baseline == 0:
+                continue
+            initially_detected += 1
+            evaded = False
+            if feedback:
                 done = False
                 while not done:
                     action = self.agent.take_deterministic_action(state)
-                    next_state, reward, done, result = self.env.step(action)
-                    if done:
-                        q_values_1 = self.agent.critic_1(state)
-                        q_values_2 = self.agent.critic_2(state)
-                        max_q_value = torch.max(q_values_1.squeeze()[action], q_values_2.squeeze()[action])
-                        step_list.append(self.env.step_num)
-                        q_values.append(max_q_value)
-                    state = next_state
-
-                if self.rl_args.trainer.flow_save_pth is not None:
-                    packet_feature['ipd'].append(self.env.real_feat['ipd'])
-                    packet_feature['size'].append(self.env.real_feat['size'])
-                    packet_feature['ori'].append(self.env.original_index)
-                    packet_feature['src'].append(self.env.src_index)
-                    packet_feature['first_timestamp'].append(self.env.flow.timestp[0])
-
-                total_result.append(result)
-                average_result = np.mean(total_result)
-                pbar.set_postfix(average_result="{:.4f}".format(average_result))
-        print('mean q value: ', torch.mean(torch.stack(q_values)))
-        print('average step: ', np.mean(step_list))
-        
-        if self.rl_args.trainer.flow_save_pth is not None:
-            with open(self.rl_args.trainer.flow_save_pth, 'wb') as f:
-                pickle.dump(packet_feature, f)
-    
-        return total_result
-
-    def evaluate_without_feedback(self, threshold, stop_step, eval_episodes=10):
-        if self.rl_args.trainer.env_name == 'KitSune':
-            self.env = KitSuneEnv(rl_args, bert_args, 'test')
-        elif self.rl_args.trainer.env_name == 'LSTM':
-            self.env = LSTMEnv(rl_args, bert_args, 'test')
-        elif self.rl_args.trainer.env_name == 'NetBeacon':
-            self.env = NetBeaconEnv(rl_args, bert_args, 'test')
-        elif self.rl_args.trainer.env_name == 'Flowlens':
-            self.env = FlowlensEnv(rl_args, bert_args, 'test')
-        elif self.rl_args.trainer.env_name == 'Whisper':
-            self.env = WhisperEnv(rl_args, bert_args, 'test')
-        elif self.rl_args.trainer.env_name == 'MLP':
-            self.env = MLPEnv(rl_args, bert_args, 'test')
-            
-        total_result = []
-        
-        if self.rl_args.trainer.flow_save_pth is not None:
-            packet_feature = {
-                'ipd': [],
-                'size': [],
-                'ori': [],
-                'src': [],
-                'first_timestamp': []
-            }
-        
-        with tqdm(range(eval_episodes), desc='evaluating...') as pbar:
-            for _ in pbar:
-                state = self.env.reset()
-                step = 0
-                while 1:
-                    step += 1
+                    state, _reward, done, evaded = env.step(action)
+            else:
+                for _step in range(int(self.rl_args.trainer.max_stop_step)):
                     action = self.agent.take_deterministic_action(state)
-                    next_state, reward, done, result = self.env.step(action)
-                    if step >= stop_step + 1 or self.agent.eval_stop(state, threshold, action=action):
-                        total_result.append(result)
+                    should_stop = self.agent.eval_stop(
+                        state, self.rl_args.trainer.stop_threshold, action)
+                    state = env.apply_action(action)
+                    if should_stop:
                         break
-                    state = next_state
-                average_reward = np.mean(total_result)
-                pbar.set_postfix(average_reward="{:.4f}".format(average_reward))
-        
-        if self.rl_args.trainer.flow_save_pth is not None:
-            with open(self.rl_args.trainer.flow_save_pth, 'wb') as f:
-                pickle.dump(packet_feature, f)
-        return total_result
+
+                evaded = env.get_res() == 0
+            successes += int(evaded)
+            edits.append(env.step_num)
+            attack_queries.append(env.evaluator.query_count)
+            progress.set_postfix(asr="{:.3f}".format(
+                successes / initially_detected))
+
+        elapsed = time.perf_counter() - started
+        if initially_detected == 0:
+            raise RuntimeError("target detected none of the evaluation flows")
+        return {
+            "feedback": bool(feedback),
+            "sampled_flows": attempted,
+            "initially_detected": initially_detected,
+            "initial_detection_rate": initially_detected / attempted,
+            "successful_evasions": successes,
+            "conditional_asr": successes / initially_detected,
+            "mean_edits": float(np.mean(edits)),
+            "mean_attack_queries": float(np.mean(attack_queries)),
+            "elapsed_seconds": elapsed,
+            "milliseconds_per_detected_flow": 1000.0 * elapsed / initially_detected,
+        }
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--rl_pth', type=str, default='advGenerate/config/sac.yaml',
-                        help='path to load sac config', )
-    parser.add_argument('--bert_pth', type=str, default='trafficMimic/config/bert.yaml',
-                        help='path to load bert config', )
-    args = parser.parse_args()
-    rl_args = recursive_namespace(read_yaml(args.rl_pth))
-    bert_args = recursive_namespace(read_yaml(args.bert_pth))
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--rl-config",
+                        default="src/advGenerate/config/sac.yaml")
+    parser.add_argument("--bert-config",
+                        default="src/trafficMimic/config/bert.yaml")
+    parser.add_argument("--device", help="override cpu/cuda:N from config")
+    parser.add_argument("--skip-train", action="store_true")
+    cli = parser.parse_args(argv)
+    rl_args = recursive_namespace(read_yaml(cli.rl_config))
+    bert_args = recursive_namespace(read_yaml(cli.bert_config))
+    if cli.device:
+        rl_args.trainer.device = cli.device
+    set_seed(rl_args.trainer.seed)
 
+    target_path = resolve_repo_path(rl_args.trainer.target_model_pth)
+    if not target_path.is_file():
+        raise FileNotFoundError(
+            "target checkpoint is missing; run scripts/train_target_model.sh first: {}"
+            .format(target_path))
     trainer = Trainer(rl_args, bert_args)
+    agent_path = resolve_repo_path(rl_args.trainer.model_save_pth)
+    training = None
+    if not cli.skip_train:
+        training = trainer.train()
+    elif not (agent_path / "actor.pth").is_file():
+        raise FileNotFoundError("no saved SAC agent under {}".format(agent_path))
+    trainer.agent.load_model(agent_path)
 
-    # train
-    return_list = trainer.train_off_policy_agent()
+    evaluation_count = int(rl_args.trainer.test_episodes)
+    with_feedback = trainer.evaluate(evaluation_count, feedback=True)
+    without_feedback = trainer.evaluate(evaluation_count, feedback=False)
+    report_path = resolve_repo_path(rl_args.trainer.report_path)
+    report = {
+        "seed": rl_args.trainer.seed,
+        "device": str(trainer.device),
+        "edit_budget": int(rl_args.trainer.max_stop_step),
+        "training": training,
+        "with_feedback": with_feedback,
+        "without_feedback": without_feedback,
+    }
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    with report_path.open("w") as handle:
+        json.dump(report, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    print(json.dumps(report, indent=2, sort_keys=True))
+    print("report written to {}".format(report_path))
+    return report
 
-    # test
-    start_time = time.perf_counter()
-    
-    result_list = trainer.evaluate_without_feedback(trainer.rl_args.trainer.stop_threshold, trainer.rl_args.trainer.max_stop_step, 
-                                                       eval_episodes=rl_args.trainer.test_episodes)
-    end_time = time.perf_counter()
-    elapsed_time = end_time - start_time
-    print('elapsed time: ', elapsed_time)
-    print('average_reward: ', np.sum(result_list) / len(result_list))
+
+if __name__ == "__main__":
+    main()

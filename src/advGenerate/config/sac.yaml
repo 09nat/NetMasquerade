@@ -1,40 +1,36 @@
+# NetMasquerade stage 2. All relative paths resolve from the repository root.
 trainer:
-  train_data_pth: ../traffic_data/HVData/csrf/flow/csrf_m_RL.pkl
-  test_data_pth: ../traffic_data/HVData/csrf/flow/csrf_m_RL.pkl
-  device: 1
-  episodes: 3000
-  test_episodes: 99
+  train_data_pth: traffic_data/fuzzing/malicious_train.pkl
+  test_data_pth: traffic_data/fuzzing/malicious_test.pkl
+
+  env_name: NetBeacon
+  target_model_pth: outputs/netbeacon/fuzzing.pkl
+  bert_pth: pretrained_models/traffic_bert/BERTLM_mawi0611_sizebest.pth
+  model_save_pth: outputs/netmasquerade/agent
+  report_path: outputs/netmasquerade/reproduction.json
+
+  device: cuda:0
+  seed: 512
+  episodes: 1000        # SAC training episodes (one flow per episode)
+  test_episodes: 100
   batch_size: 64
-  buffer_size: 10000   
-  minimal_size: 200
-  model_save_pth: ./advGenerate/checkpoints/MLP_csrf/
-  target_model_pth: ./advGenerate/environments/MLP/model/csrf.pt
-  fig_save_pth:
-  stop_threshold: 0.95
-  max_stop_step: 10
-  env_name: MLP
-  figure_path:
-  flow_save_pth:
-  bert_pth: ../pretrained_models/56_bi_attn_linear/BERTLM_model_mawi202306_sizebest.pth
+  buffer_size: 10000
+  minimal_size: 200     # replay-buffer warm-up before the first update
+
+  max_stop_step: 5      # exact maximum number of packet edits per flow
+  stop_threshold: 0.95  # confidence at which the agent stops on its own when
+                        # no detector feedback is available
 
 env:
-  bad_ip:
+  bad_ip:               # attacker IP; null -> use the first packet's source IP
 
 model:
-  timevocab_size: 56
-  sizevocab_size: 1606
-  actor_lr: 0.00001  # 0.00001
-  critic_lr: 0.00001 # 0.00001
-  alpha_lr: 0.00001
-  num_episodes: 200
+  state_dim: 512        # max tokens per flow; action space is 2*state_dim+1
   embedding_dim: 128
-  state_dim: 512
   hidden_dim: 128
-  gamma: 0.9 # 
-  tau: 0.005  # soft update
-  buffer_size: 100000
-  minimal_size: 1000
-  batch_size: 64
+  actor_lr: 0.00001
+  critic_lr: 0.00001
+  alpha_lr: 0.00001
+  gamma: 0.9
+  tau: 0.005            # target-network soft update
   target_entropy: -5
-  gamma_1: 0
-  gamma_2: 0
